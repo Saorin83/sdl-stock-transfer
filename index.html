@@ -215,6 +215,42 @@
     margin-left:6px;
   }
   .pill.warn{background:var(--holiday);}
+  .pill-pending{background:var(--holiday);color:var(--hector);}
+  .pill-completed{background:var(--bobscove);color:var(--hector);}
+  .pill-declined{background:var(--cherry);color:#fff;}
+  .home-btn .badge{
+    display:inline-block;
+    background:var(--holiday);
+    color:var(--hector);
+    font-size:12px;
+    font-weight:800;
+    padding:2px 9px;
+    border-radius:20px;
+    margin-left:8px;
+  }
+  .pending-card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-left:6px solid var(--holiday);
+    border-radius:10px;
+    padding:14px;
+    margin-bottom:14px;
+  }
+  .pending-card .head-line{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;}
+  .pending-card .route{font-weight:700;font-size:15px;}
+  .pending-card .meta{font-size:12px;color:#666;margin-top:3px;}
+  .pending-line{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:8px 0;
+    border-top:1px solid var(--border);
+    flex-wrap:wrap;
+  }
+  .pending-line .name{flex:1;min-width:140px;font-size:14px;}
+  .pending-line .req-qty{font-size:12px;color:#666;min-width:90px;}
+  .pending-line .actual-qty{width:80px;}
+  .decline-reason-box{margin-top:10px;}
   .empty-state{text-align:center;color:#888;padding:30px 10px;font-size:14px;}
   .save-hint{font-size:11px;color:#12684a;margin-left:4px;}
   .totals{font-size:13px;color:#666;margin-top:8px;}
@@ -248,6 +284,12 @@ const FROM_LOCATIONS = [
   "Chemical Store", "Cafe Fridge", "Cafe Safe Room", "Office"
 ];
 const TO_LOCATIONS = ["Bowen", "Pride", "Spirit", "Stirling"];
+
+const STATUS_LABELS = { pending: "Pending", completed: "Completed", declined: "Declined" };
+function statusPill(status){
+  const cls = status === "completed" ? "pill-completed" : status === "declined" ? "pill-declined" : "pill-pending";
+  return `<span class="pill ${cls}">${STATUS_LABELS[status] || status}</span>`;
+}
 
 /* ================= STATE ================= */
 let inventoryItems = [];       // loaded once from Supabase
@@ -312,18 +354,25 @@ function render(screen, opts){
   showBack(screen !== "home");
   if(screen === "home") renderHome();
   else if(screen === "newTransfer") renderNewTransfer();
+  else if(screen === "pending") renderPendingRequests();
   else if(screen === "history") renderHistory();
   else if(screen === "manageItems") renderManageItems();
 }
 
 /* ================= HOME SCREEN ================= */
-function renderHome(){
+async function renderHome(){
   setTitle("SDL Stock Transfer");
   app.innerHTML = `
     <button class="home-btn" id="btnNew">
       <span class="icon">🚤</span>
-      <span>+ New Transfer
-        <span class="sub">Log stock moving from the store to a boat</span>
+      <span>+ Request Transfer
+        <span class="sub">Request stock to move from the store to a boat</span>
+      </span>
+    </button>
+    <button class="home-btn" id="btnPending">
+      <span class="icon">📥</span>
+      <span>Pending Requests <span class="badge" id="pendingBadge" style="display:none;"></span>
+        <span class="sub">Store staff: review, adjust quantities, accept or decline</span>
       </span>
     </button>
     <button class="home-btn" id="btnHistory">
@@ -340,15 +389,20 @@ function renderHome(){
     </button>
   `;
   document.getElementById("btnNew").onclick = () => navigate("newTransfer");
+  document.getElementById("btnPending").onclick = () => navigate("pending");
   document.getElementById("btnHistory").onclick = () => navigate("history");
   document.getElementById("btnItems").onclick = () => navigate("manageItems");
+
+  const { count } = await sb.from("stock_transfers").select("id", { count: "exact", head: true }).eq("status", "pending");
+  const badge = document.getElementById("pendingBadge");
+  if(count){ badge.textContent = count; badge.style.display = "inline-block"; }
 }
 
 /* ================= NEW TRANSFER SCREEN ================= */
 function blankRow(){ return { search:"", inventory_item_id:null, inventory_id:null, description:"", unit:"", unit_price:null, quantity:"" }; }
 
 async function renderNewTransfer(){
-  setTitle("New Transfer");
+  setTitle("Request Transfer");
   app.innerHTML = `<div class="card"><div class="empty-state">Loading item list…</div></div>`;
   await ensureInventoryLoaded();
 
@@ -369,7 +423,7 @@ async function renderNewTransfer(){
         ${TO_LOCATIONS.map(l => `<option value="${l}">${l}</option>`).join("")}
       </select>
 
-      <label>Transferred by</label>
+      <label>Requested by</label>
       <input type="text" id="byWho" placeholder="Your name" />
 
       <label>Date</label>
@@ -388,7 +442,7 @@ async function renderNewTransfer(){
     </div>
 
     <div class="btn-row">
-      <button class="btn full" id="submitBtn">Submit Transfer</button>
+      <button class="btn full" id="submitBtn">Submit Request</button>
     </div>
   `;
 
@@ -486,13 +540,14 @@ async function submitTransfer(){
     from_location: fromLoc,
     to_location: toLoc,
     transferred_by: byWho || null,
-    notes: notes || null
+    notes: notes || null,
+    status: "pending"
   }).select().single();
 
   if(tErr){
-    showMsg("Could not save transfer: " + tErr.message, "error");
+    showMsg("Could not save request: " + tErr.message, "error");
     submitBtn.disabled = false;
-    submitBtn.textContent = "Submit Transfer";
+    submitBtn.textContent = "Submit Request";
     return;
   }
 
@@ -509,18 +564,135 @@ async function submitTransfer(){
   const { error: lErr } = await sb.from("stock_transfer_items").insert(lines);
 
   submitBtn.disabled = false;
-  submitBtn.textContent = "Submit Transfer";
+  submitBtn.textContent = "Submit Request";
 
   if(lErr){
-    showMsg("Transfer saved, but items failed to save: " + lErr.message, "error");
+    showMsg("Request saved, but items failed to save: " + lErr.message, "error");
     return;
   }
 
   newTransferRows = [blankRow()];
-  showMsg(`Transfer saved — ${lines.length} item(s) from ${fromLoc} to ${toLoc}.`, "success");
+  showMsg(`Request submitted — ${lines.length} item(s) from ${fromLoc} to ${toLoc}. Store staff will review it under Pending Requests.`, "success");
   document.getElementById("byWho").value = "";
   document.getElementById("notes").value = "";
   renderItemRows();
+}
+
+/* ================= PENDING REQUESTS SCREEN (store staff) ================= */
+async function loadPending(){
+  const { data: transfers, error } = await sb.from("stock_transfers").select("*").eq("status", "pending").order("transfer_date", { ascending:true });
+  if(error){ alert("Could not load pending requests: " + error.message); return []; }
+  const ids = (transfers||[]).map(t => t.id);
+  if(ids.length === 0) return [];
+  const { data: lines, error: lErr } = await sb.from("stock_transfer_items").select("*").in("transfer_id", ids);
+  if(lErr){ alert("Could not load request items: " + lErr.message); return []; }
+  const byTransfer = {};
+  (lines||[]).forEach(l => { (byTransfer[l.transfer_id] = byTransfer[l.transfer_id] || []).push(l); });
+  return (transfers||[]).map(t => ({...t, lines: byTransfer[t.id] || []}));
+}
+
+let pendingCache = [];
+
+async function renderPendingRequests(){
+  setTitle("Pending Requests");
+  app.innerHTML = `<div class="card"><div class="empty-state">Loading…</div></div>`;
+  pendingCache = await loadPending();
+  renderPendingList();
+}
+
+function renderPendingList(){
+  if(pendingCache.length === 0){
+    app.innerHTML = `<div class="empty-state">No pending requests right now 🎉</div>`;
+    return;
+  }
+  app.innerHTML = pendingCache.map(t => `
+    <div class="pending-card" id="pend-${t.id}">
+      <div class="head-line">
+        <div>
+          <div class="route">${escapeHtml(t.from_location)} &rarr; ${escapeHtml(t.to_location)}</div>
+          <div class="meta">${fmtDateNZ(t.transfer_date)} ${t.transferred_by ? "· requested by " + escapeHtml(t.transferred_by) : ""}</div>
+          ${t.notes ? `<div class="meta">Notes: ${escapeHtml(t.notes)}</div>` : ""}
+        </div>
+        ${statusPill(t.status)}
+      </div>
+      ${t.lines.map(l => `
+        <div class="pending-line" data-line="${l.id}">
+          <div class="name">${escapeHtml(l.description)}</div>
+          <div class="req-qty">Requested: ${l.quantity} ${escapeHtml(l.unit||"")}</div>
+          <input type="number" min="0" step="any" class="actual-qty" data-actual-id="${l.id}" value="${l.quantity}" />
+        </div>
+      `).join("")}
+      <label class="first" style="margin-top:12px;">Your name (store staff)</label>
+      <input type="text" class="staff-name" data-staff-id="${t.id}" placeholder="Your name" />
+      <div class="btn-row">
+        <button class="btn full" data-accept="${t.id}" type="button">Accept &amp; Complete</button>
+        <button class="btn outline full" data-decline="${t.id}" type="button">Decline</button>
+      </div>
+      <div class="decline-reason-box" data-reason-box="${t.id}" style="display:none;">
+        <label class="first">Reason for declining</label>
+        <textarea class="decline-reason" data-reason-id="${t.id}" placeholder="e.g. out of stock, will send next trip"></textarea>
+        <div class="btn-row">
+          <button class="btn secondary full" data-confirm-decline="${t.id}" type="button">Confirm Decline</button>
+        </div>
+      </div>
+    </div>
+  `).join("");
+
+  document.querySelectorAll("[data-accept]").forEach(btn => {
+    btn.addEventListener("click", () => completePending(btn.dataset.accept));
+  });
+  document.querySelectorAll("[data-decline]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const box = document.querySelector(`[data-reason-box="${btn.dataset.decline}"]`);
+      box.style.display = box.style.display === "none" ? "block" : "none";
+    });
+  });
+  document.querySelectorAll("[data-confirm-decline]").forEach(btn => {
+    btn.addEventListener("click", () => declinePending(btn.dataset.confirmDecline));
+  });
+}
+
+async function completePending(transferId){
+  const t = pendingCache.find(x => x.id === transferId);
+  const staffName = document.querySelector(`[data-staff-id="${transferId}"]`).value.trim();
+  if(!staffName){ alert("Please enter your name before completing this request."); return; }
+
+  const updates = t.lines.map(l => {
+    const input = document.querySelector(`[data-actual-id="${l.id}"]`);
+    const actual = input ? Number(input.value) : l.quantity;
+    return sb.from("stock_transfer_items").update({ actual_quantity: actual }).eq("id", l.id);
+  });
+  const results = await Promise.all(updates);
+  const failedLine = results.find(r => r.error);
+  if(failedLine){ alert("Could not update item quantities: " + failedLine.error.message); return; }
+
+  const { error } = await sb.from("stock_transfers").update({
+    status: "completed",
+    completed_at: new Date().toISOString(),
+    completed_by: staffName
+  }).eq("id", transferId);
+  if(error){ alert("Could not complete request: " + error.message); return; }
+
+  pendingCache = pendingCache.filter(x => x.id !== transferId);
+  renderPendingList();
+}
+
+async function declinePending(transferId){
+  const staffName = document.querySelector(`[data-staff-id="${transferId}"]`).value.trim();
+  const reason = document.querySelector(`[data-reason-id="${transferId}"]`).value.trim();
+  if(!staffName){ alert("Please enter your name before declining this request."); return; }
+  if(!reason){ alert("Please add a short reason for declining."); return; }
+
+  const { error } = await sb.from("stock_transfers").update({
+    status: "declined",
+    completed_at: new Date().toISOString(),
+    completed_by: staffName,
+    decline_reason: reason
+  }).eq("id", transferId);
+  if(error){ alert("Could not decline request: " + error.message); return; }
+
+  pendingCache = pendingCache.filter(x => x.id !== transferId);
+  renderPendingList();
 }
 
 /* ================= HISTORY SCREEN ================= */
@@ -546,12 +718,14 @@ function renderHistoryList(){
   const toVal = document.getElementById("filterTo")?.value || "";
   const startVal = document.getElementById("filterStart")?.value || "";
   const endVal = document.getElementById("filterEnd")?.value || "";
+  const statusVal = document.getElementById("filterStatus")?.value || "";
 
   const filtered = historyCache.filter(t => {
     if(fromVal && t.from_location !== fromVal) return false;
     if(toVal && t.to_location !== toVal) return false;
     if(startVal && t.transfer_date < startVal) return false;
     if(endVal && t.transfer_date > endVal) return false;
+    if(statusVal && t.status !== statusVal) return false;
     return true;
   });
 
@@ -576,13 +750,24 @@ function renderHistoryList(){
         <input type="date" id="filterEnd" value="${endVal}" />
       </div>
     </div>
+    <div class="filter-row">
+      <div>
+        <label class="first">Status</label>
+        <select id="filterStatus">
+          <option value="">All</option>
+          <option value="pending" ${statusVal==="pending"?"selected":""}>Pending</option>
+          <option value="completed" ${statusVal==="completed"?"selected":""}>Completed</option>
+          <option value="declined" ${statusVal==="declined"?"selected":""}>Declined</option>
+        </select>
+      </div>
+    </div>
     <div class="btn-row" style="margin-top:0;margin-bottom:16px;">
       <button class="btn secondary full" id="exportBtn" type="button">Export CSV (${filtered.length})</button>
     </div>
     <div id="listArea"></div>
   `;
 
-  ["filterFrom","filterTo","filterStart","filterEnd"].forEach(id => {
+  ["filterFrom","filterTo","filterStart","filterEnd","filterStatus"].forEach(id => {
     document.getElementById(id).addEventListener("change", renderHistoryList);
   });
   document.getElementById("exportBtn").onclick = () => exportCsv(filtered);
@@ -594,13 +779,14 @@ function renderHistoryList(){
   }
 
   listArea.innerHTML = filtered.map(t => {
-    const total = t.lines.reduce((s,l) => s + (Number(l.unit_price||0) * Number(l.quantity||0)), 0);
+    const total = t.lines.reduce((s,l) => s + (Number(l.unit_price||0) * Number(l.actual_quantity ?? l.quantity ?? 0)), 0);
     return `
     <div class="transfer-card" id="card-${t.id}">
       <div class="head" data-toggle="${t.id}">
         <div>
-          <div class="route">${escapeHtml(t.from_location)} &rarr; ${escapeHtml(t.to_location)}</div>
-          <div class="meta">${fmtDateNZ(t.transfer_date)} ${t.transferred_by ? "· " + escapeHtml(t.transferred_by) : ""} · ${t.lines.length} item(s)</div>
+          <div class="route">${escapeHtml(t.from_location)} &rarr; ${escapeHtml(t.to_location)} ${statusPill(t.status)}</div>
+          <div class="meta">${fmtDateNZ(t.transfer_date)} ${t.transferred_by ? "· requested by " + escapeHtml(t.transferred_by) : ""} · ${t.lines.length} item(s)</div>
+          ${t.completed_by ? `<div class="meta">${t.status === "declined" ? "Declined" : "Completed"} by ${escapeHtml(t.completed_by)}</div>` : ""}
         </div>
         <div style="text-align:right;">
           <div class="meta">${fmtMoney(total)}</div>
@@ -608,15 +794,17 @@ function renderHistoryList(){
       </div>
       <div class="body">
         <table class="lines">
-          <tr><th>Item</th><th>Qty</th><th>Unit</th><th>Value</th></tr>
+          <tr><th>Item</th><th>Requested</th><th>Actual</th><th>Unit</th><th>Value</th></tr>
           ${t.lines.map(l => `<tr>
             <td>${escapeHtml(l.description)}</td>
             <td>${l.quantity}</td>
+            <td>${l.actual_quantity ?? "—"}</td>
             <td>${escapeHtml(l.unit||"")}</td>
-            <td>${fmtMoney(Number(l.unit_price||0) * Number(l.quantity||0))}</td>
+            <td>${fmtMoney(Number(l.unit_price||0) * Number(l.actual_quantity ?? l.quantity ?? 0))}</td>
           </tr>`).join("")}
         </table>
         ${t.notes ? `<div class="totals">Notes: ${escapeHtml(t.notes)}</div>` : ""}
+        ${t.decline_reason ? `<div class="totals">Decline reason: ${escapeHtml(t.decline_reason)}</div>` : ""}
         <div class="btn-row">
           <button class="btn outline small" data-delete="${t.id}" type="button">Delete transfer</button>
         </div>
@@ -644,16 +832,17 @@ function renderHistoryList(){
 }
 
 function exportCsv(transfers){
-  const rows = [["Date","From","To","Transferred by","Item","Inventory ID","Quantity","Unit","Unit Price","Line Value","Notes"]];
+  const rows = [["Date","From","To","Requested by","Status","Completed/Declined by","Item","Inventory ID","Requested Qty","Actual Qty","Unit","Unit Price","Line Value","Notes","Decline Reason"]];
   transfers.forEach(t => {
     if(t.lines.length === 0){
-      rows.push([fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"", "", "", "", "", "", "", t.notes||""]);
+      rows.push([fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"", t.status, t.completed_by||"", "", "", "", "", "", "", "", t.notes||"", t.decline_reason||""]);
     }
     t.lines.forEach(l => {
+      const actual = l.actual_quantity ?? l.quantity;
       rows.push([
-        fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"",
-        l.description, l.inventory_id||"", l.quantity, l.unit||"",
-        l.unit_price||"", (Number(l.unit_price||0)*Number(l.quantity||0)).toFixed(2), t.notes||""
+        fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"", t.status, t.completed_by||"",
+        l.description, l.inventory_id||"", l.quantity, l.actual_quantity ?? "", l.unit||"",
+        l.unit_price||"", (Number(l.unit_price||0)*Number(actual||0)).toFixed(2), t.notes||"", t.decline_reason||""
       ]);
     });
   });
