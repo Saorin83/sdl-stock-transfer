@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+<title>SDL Stock Transfer</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --sd-red:#910035;
+    --cherry:#D12C38;
+    --hector:#192E3C;
+    --bobscove:#79D2C5;
+    --bluebelle:#0092C7;
+    --holiday:#F5A716;
+    --bg:#f6f5f3;
+    --card:#ffffff;
+    --border:#e2e0dc;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:-apple-system,BlinkMacSystemFont,"Century Gothic",Helvetica,Arial,sans-serif;
+    background:var(--bg);
+    color:var(--hector);
+    padding-bottom:40px;
+  }
+  header.topbar{
+    background:var(--sd-red);
+    color:#fff;
+    padding:14px 16px;
+    display:flex;
+    align-items:center;
+    gap:10px;
+    position:sticky;
+    top:0;
+    z-index:10;
+    box-shadow:0 2px 6px rgba(0,0,0,0.15);
+  }
+  header.topbar button.back{
+    background:transparent;
+    border:none;
+    color:#fff;
+    font-size:20px;
+    cursor:pointer;
+    padding:4px 8px;
+    line-height:1;
+  }
+  header.topbar h1{
+    font-size:17px;
+    margin:0;
+    font-weight:700;
+    flex:1;
+  }
+  main{
+    max-width:640px;
+    margin:0 auto;
+    padding:16px;
+  }
+  .home-btn{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    width:100%;
+    background:var(--card);
+    border:1px solid var(--border);
+    border-left:6px solid var(--sd-red);
+    border-radius:10px;
+    padding:18px 16px;
+    margin-bottom:14px;
+    font-size:16px;
+    font-weight:600;
+    color:var(--hector);
+    cursor:pointer;
+    text-align:left;
+  }
+  .home-btn .icon{font-size:26px;}
+  .home-btn .sub{display:block;font-weight:400;font-size:13px;color:#666;margin-top:2px;}
+  .card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:16px;
+    margin-bottom:14px;
+  }
+  label{
+    display:block;
+    font-size:13px;
+    font-weight:700;
+    margin:12px 0 4px;
+    color:var(--hector);
+  }
+  label.first{margin-top:0;}
+  input[type=text], input[type=number], input[type=date], select, textarea{
+    width:100%;
+    padding:10px;
+    border:1px solid #ccc;
+    border-radius:8px;
+    font-size:15px;
+    background:#fff;
+    color:var(--hector);
+    font-family:inherit;
+  }
+  textarea{resize:vertical;min-height:60px;}
+  .btn{
+    display:inline-block;
+    background:var(--sd-red);
+    color:#fff;
+    border:none;
+    border-radius:8px;
+    padding:12px 18px;
+    font-size:15px;
+    font-weight:700;
+    cursor:pointer;
+    text-align:center;
+  }
+  .btn.secondary{background:var(--hector);}
+  .btn.outline{background:transparent;color:var(--sd-red);border:2px solid var(--sd-red);}
+  .btn.small{padding:7px 12px;font-size:13px;}
+  .btn.full{width:100%;}
+  .btn:disabled{opacity:0.5;cursor:not-allowed;}
+  .btn-row{display:flex;gap:10px;margin-top:16px;}
+  .item-row{
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:12px;
+    margin-bottom:10px;
+    position:relative;
+    background:#fbfaf8;
+  }
+  .item-row .remove-row{
+    position:absolute;
+    top:8px;
+    right:8px;
+    background:none;
+    border:none;
+    color:var(--cherry);
+    font-size:18px;
+    cursor:pointer;
+  }
+  .item-row .qty-unit{display:flex;gap:10px;}
+  .item-row .qty-unit input{flex:1;}
+  .item-row .qty-unit .unit-display{
+    flex:1;
+    display:flex;
+    align-items:center;
+    color:#666;
+    font-size:14px;
+    padding-left:4px;
+  }
+  datalist{}
+  .msg{
+    padding:10px 12px;
+    border-radius:8px;
+    margin-bottom:12px;
+    font-size:14px;
+    font-weight:600;
+  }
+  .msg.success{background:#e4f7f1;color:#12684a;border:1px solid #b6e6d4;}
+  .msg.error{background:#fdecec;color:var(--sd-red);border:1px solid #f3c2c9;}
+  .transfer-card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:10px;
+    margin-bottom:12px;
+    overflow:hidden;
+  }
+  .transfer-card .head{
+    padding:12px 14px;
+    cursor:pointer;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:10px;
+  }
+  .transfer-card .head .route{font-weight:700;font-size:15px;}
+  .transfer-card .head .meta{font-size:12px;color:#666;margin-top:3px;}
+  .transfer-card .body{
+    display:none;
+    padding:0 14px 14px;
+    border-top:1px solid var(--border);
+  }
+  .transfer-card.open .body{display:block;}
+  table.lines{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}
+  table.lines th, table.lines td{
+    text-align:left;
+    padding:6px 4px;
+    border-bottom:1px solid var(--border);
+  }
+  table.lines th{color:#666;font-weight:600;}
+  .filter-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;}
+  .filter-row > div{flex:1;min-width:130px;}
+  .search-box{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;font-size:15px;margin-bottom:14px;}
+  .item-admin-row{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding:10px 0;
+    border-bottom:1px solid var(--border);
+    flex-wrap:wrap;
+  }
+  .item-admin-row .desc{flex:1;min-width:160px;}
+  .item-admin-row .desc .name{font-weight:600;font-size:14px;}
+  .item-admin-row .desc .meta{font-size:12px;color:#666;}
+  .item-admin-row .price-field{width:90px;}
+  .item-admin-row.discontinued{opacity:0.5;}
+  .pill{
+    display:inline-block;
+    font-size:11px;
+    font-weight:700;
+    padding:2px 8px;
+    border-radius:20px;
+    background:var(--bobscove);
+    color:var(--hector);
+    margin-left:6px;
+  }
+  .pill.warn{background:var(--holiday);}
+  .empty-state{text-align:center;color:#888;padding:30px 10px;font-size:14px;}
+  .save-hint{font-size:11px;color:#12684a;margin-left:4px;}
+  .totals{font-size:13px;color:#666;margin-top:8px;}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <button class="back" id="backBtn" style="visibility:hidden;">&#8592;</button>
+  <h1 id="screenTitle">SDL Stock Transfer</h1>
+</header>
+
+<main id="app">
+  <!-- screens are rendered here by JS -->
+</main>
+
+<script>
+/* ================= CONFIG ================= */
+/* TO DO before this app will work:
+   1. Create a new Supabase project (see setup instructions).
+   2. Run setup.sql in that project's SQL Editor.
+   3. Paste the Project URL and anon public key below. */
+const SUPABASE_URL = "https://deegydixnezqegigawvy.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_9jLxLxxfqWIfraeLNm3dQg_HaTI50bX";
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+/* ================= STATIC DATA ================= */
+const FROM_LOCATIONS = [
+  "Dry Store", "Walk in Fridge", "Walk in Freezer", "Beverage Fridge",
+  "Chemical Store", "Cafe Fridge", "Cafe Safe Room", "Office"
+];
+const TO_LOCATIONS = ["Bowen", "Pride", "Spirit", "Stirling"];
+
+/* ================= STATE ================= */
+let inventoryItems = [];       // loaded once from Supabase
+let inventoryLoaded = false;
+let newTransferRows = [];      // working state for the New Transfer form
+let historyCache = [];         // loaded transfers + their lines
+let navStack = [];             // simple screen history for back button
+
+/* ================= HELPERS ================= */
+function fmtDateNZ(isoDate){
+  if(!isoDate) return "";
+  const d = new Date(isoDate + (isoDate.length<=10 ? "T00:00:00" : ""));
+  if(isNaN(d)) return isoDate;
+  const dd = String(d.getDate()).padStart(2,"0");
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+function fmtMoney(n){
+  if(n === null || n === undefined || isNaN(n)) return "";
+  return "$" + Number(n).toFixed(2);
+}
+function todayISO(){
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function escapeHtml(s){
+  if(s === null || s === undefined) return "";
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function setTitle(t){ document.getElementById("screenTitle").textContent = t; }
+function showBack(show){ document.getElementById("backBtn").style.visibility = show ? "visible" : "hidden"; }
+
+async function ensureInventoryLoaded(){
+  if(inventoryLoaded) return;
+  const { data, error } = await sb.from("inventory_items").select("*").order("description");
+  if(error){ alert("Could not load item list: " + error.message); return; }
+  inventoryItems = data || [];
+  inventoryLoaded = true;
+}
+
+/* ================= ROUTER ================= */
+const app = document.getElementById("app");
+
+function goHome(){ navStack = []; render("home"); }
+function navigate(screen, opts){
+  navStack.push({screen: currentScreen, opts: currentOpts});
+  render(screen, opts);
+}
+function goBack(){
+  const prev = navStack.pop();
+  if(prev){ render(prev.screen, prev.opts); } else { render("home"); }
+}
+document.getElementById("backBtn").addEventListener("click", goBack);
+
+let currentScreen = "home";
+let currentOpts = null;
+
+function render(screen, opts){
+  currentScreen = screen;
+  currentOpts = opts;
+  showBack(screen !== "home");
+  if(screen === "home") renderHome();
+  else if(screen === "newTransfer") renderNewTransfer();
+  else if(screen === "history") renderHistory();
+  else if(screen === "manageItems") renderManageItems();
+}
+
+/* ================= HOME SCREEN ================= */
+function renderHome(){
+  setTitle("SDL Stock Transfer");
+  app.innerHTML = `
+    <button class="home-btn" id="btnNew">
+      <span class="icon">🚤</span>
+      <span>+ New Transfer
+        <span class="sub">Log stock moving from the store to a boat</span>
+      </span>
+    </button>
+    <button class="home-btn" id="btnHistory">
+      <span class="icon">📋</span>
+      <span>Transfer History
+        <span class="sub">View, filter and export past transfers</span>
+      </span>
+    </button>
+    <button class="home-btn" id="btnItems">
+      <span class="icon">💲</span>
+      <span>Manage Items &amp; Prices
+        <span class="sub">Search the item list and update prices</span>
+      </span>
+    </button>
+  `;
+  document.getElementById("btnNew").onclick = () => navigate("newTransfer");
+  document.getElementById("btnHistory").onclick = () => navigate("history");
+  document.getElementById("btnItems").onclick = () => navigate("manageItems");
+}
+
+/* ================= NEW TRANSFER SCREEN ================= */
+function blankRow(){ return { search:"", inventory_item_id:null, inventory_id:null, description:"", unit:"", unit_price:null, quantity:"" }; }
+
+async function renderNewTransfer(){
+  setTitle("New Transfer");
+  app.innerHTML = `<div class="card"><div class="empty-state">Loading item list…</div></div>`;
+  await ensureInventoryLoaded();
+
+  if(newTransferRows.length === 0){ newTransferRows = [blankRow()]; }
+
+  app.innerHTML = `
+    <div id="msgArea"></div>
+    <div class="card">
+      <label class="first">From (store location)</label>
+      <select id="fromLoc">
+        <option value="">Select…</option>
+        ${FROM_LOCATIONS.map(l => `<option value="${l}">${l}</option>`).join("")}
+      </select>
+
+      <label>To (boat)</label>
+      <select id="toLoc">
+        <option value="">Select…</option>
+        ${TO_LOCATIONS.map(l => `<option value="${l}">${l}</option>`).join("")}
+      </select>
+
+      <label>Transferred by</label>
+      <input type="text" id="byWho" placeholder="Your name" />
+
+      <label>Date</label>
+      <input type="date" id="transferDate" value="${todayISO()}" />
+    </div>
+
+    <div class="card">
+      <label class="first" style="margin-bottom:8px;">Items</label>
+      <div id="itemRows"></div>
+      <button class="btn outline full" id="addRowBtn" type="button">+ Add another item</button>
+    </div>
+
+    <div class="card">
+      <label class="first">Notes (optional)</label>
+      <textarea id="notes" placeholder="Anything unusual — damage, shortages, substitutions…"></textarea>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn full" id="submitBtn">Submit Transfer</button>
+    </div>
+  `;
+
+  const datalistId = "itemOptions";
+  if(!document.getElementById(datalistId)){
+    const dl = document.createElement("datalist");
+    dl.id = datalistId;
+    document.body.appendChild(dl);
+  }
+  document.getElementById(datalistId).innerHTML = inventoryItems
+    .filter(i => !i.discontinued)
+    .map(i => `<option value="${escapeHtml(i.description)}"></option>`).join("");
+
+  renderItemRows();
+  document.getElementById("addRowBtn").onclick = () => { newTransferRows.push(blankRow()); renderItemRows(); };
+  document.getElementById("submitBtn").onclick = submitTransfer;
+}
+
+function renderItemRows(){
+  const wrap = document.getElementById("itemRows");
+  wrap.innerHTML = newTransferRows.map((row, idx) => `
+    <div class="item-row" data-idx="${idx}">
+      ${newTransferRows.length > 1 ? `<button type="button" class="remove-row" data-remove="${idx}">&times;</button>` : ""}
+      <label class="first">Item</label>
+      <input type="text" list="itemOptions" class="item-search" data-idx="${idx}" placeholder="Start typing an item name…" value="${escapeHtml(row.search)}" autocomplete="off" />
+      <div class="qty-unit" style="margin-top:8px;">
+        <div>
+          <label style="margin:0 0 4px;">Quantity</label>
+          <input type="number" min="0" step="any" class="item-qty" data-idx="${idx}" value="${row.quantity}" />
+        </div>
+        <div>
+          <label style="margin:0 0 4px;">Unit</label>
+          <div class="unit-display">${row.unit ? escapeHtml(row.unit) : "—"}</div>
+        </div>
+      </div>
+    </div>
+  `).join("");
+
+  wrap.querySelectorAll(".item-search").forEach(inp => {
+    inp.addEventListener("input", (e) => {
+      const idx = Number(e.target.dataset.idx);
+      const val = e.target.value;
+      newTransferRows[idx].search = val;
+      const match = inventoryItems.find(i => i.description.toLowerCase() === val.toLowerCase());
+      if(match){
+        newTransferRows[idx].inventory_item_id = match.id;
+        newTransferRows[idx].inventory_id = match.inventory_id;
+        newTransferRows[idx].description = match.description;
+        newTransferRows[idx].unit = match.unit;
+        newTransferRows[idx].unit_price = match.unit_price;
+      } else {
+        newTransferRows[idx].inventory_item_id = null;
+        newTransferRows[idx].unit = "";
+      }
+      renderItemRows();
+      // restore focus/cursor after re-render
+      const refocused = wrap.querySelector(`.item-search[data-idx="${idx}"]`);
+      if(refocused){ refocused.focus(); refocused.setSelectionRange(val.length, val.length); }
+    });
+  });
+  wrap.querySelectorAll(".item-qty").forEach(inp => {
+    inp.addEventListener("input", (e) => {
+      newTransferRows[Number(e.target.dataset.idx)].quantity = e.target.value;
+    });
+  });
+  wrap.querySelectorAll("[data-remove]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      newTransferRows.splice(Number(e.target.dataset.remove), 1);
+      renderItemRows();
+    });
+  });
+}
+
+function showMsg(text, type){
+  document.getElementById("msgArea").innerHTML = `<div class="msg ${type}">${escapeHtml(text)}</div>`;
+}
+
+async function submitTransfer(){
+  const fromLoc = document.getElementById("fromLoc").value;
+  const toLoc = document.getElementById("toLoc").value;
+  const byWho = document.getElementById("byWho").value.trim();
+  const date = document.getElementById("transferDate").value;
+  const notes = document.getElementById("notes").value.trim();
+
+  if(!fromLoc || !toLoc){ showMsg("Please select both a from and to location.", "error"); return; }
+  const validRows = newTransferRows.filter(r => r.inventory_item_id && Number(r.quantity) > 0);
+  if(validRows.length === 0){ showMsg("Add at least one item with a quantity greater than 0.", "error"); return; }
+
+  const submitBtn = document.getElementById("submitBtn");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Submitting…";
+
+  const { data: transfer, error: tErr } = await sb.from("stock_transfers").insert({
+    transfer_date: date,
+    from_location: fromLoc,
+    to_location: toLoc,
+    transferred_by: byWho || null,
+    notes: notes || null
+  }).select().single();
+
+  if(tErr){
+    showMsg("Could not save transfer: " + tErr.message, "error");
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Submit Transfer";
+    return;
+  }
+
+  const lines = validRows.map(r => ({
+    transfer_id: transfer.id,
+    inventory_item_id: r.inventory_item_id,
+    inventory_id: r.inventory_id,
+    description: r.description,
+    unit: r.unit,
+    unit_price: r.unit_price,
+    quantity: Number(r.quantity)
+  }));
+
+  const { error: lErr } = await sb.from("stock_transfer_items").insert(lines);
+
+  submitBtn.disabled = false;
+  submitBtn.textContent = "Submit Transfer";
+
+  if(lErr){
+    showMsg("Transfer saved, but items failed to save: " + lErr.message, "error");
+    return;
+  }
+
+  newTransferRows = [blankRow()];
+  showMsg(`Transfer saved — ${lines.length} item(s) from ${fromLoc} to ${toLoc}.`, "success");
+  document.getElementById("byWho").value = "";
+  document.getElementById("notes").value = "";
+  renderItemRows();
+}
+
+/* ================= HISTORY SCREEN ================= */
+async function loadHistory(){
+  const { data: transfers, error } = await sb.from("stock_transfers").select("*").order("transfer_date", { ascending:false }).order("created_at", { ascending:false });
+  if(error){ alert("Could not load history: " + error.message); return []; }
+  const { data: lines, error: lErr } = await sb.from("stock_transfer_items").select("*");
+  if(lErr){ alert("Could not load transfer items: " + lErr.message); return []; }
+  const byTransfer = {};
+  (lines||[]).forEach(l => { (byTransfer[l.transfer_id] = byTransfer[l.transfer_id] || []).push(l); });
+  return (transfers||[]).map(t => ({...t, lines: byTransfer[t.id] || []}));
+}
+
+async function renderHistory(){
+  setTitle("Transfer History");
+  app.innerHTML = `<div class="card"><div class="empty-state">Loading…</div></div>`;
+  historyCache = await loadHistory();
+  renderHistoryList();
+}
+
+function renderHistoryList(){
+  const fromVal = document.getElementById("filterFrom")?.value || "";
+  const toVal = document.getElementById("filterTo")?.value || "";
+  const startVal = document.getElementById("filterStart")?.value || "";
+  const endVal = document.getElementById("filterEnd")?.value || "";
+
+  const filtered = historyCache.filter(t => {
+    if(fromVal && t.from_location !== fromVal) return false;
+    if(toVal && t.to_location !== toVal) return false;
+    if(startVal && t.transfer_date < startVal) return false;
+    if(endVal && t.transfer_date > endVal) return false;
+    return true;
+  });
+
+  app.innerHTML = `
+    <div class="filter-row">
+      <div>
+        <label class="first">From</label>
+        <select id="filterFrom"><option value="">All</option>${FROM_LOCATIONS.map(l=>`<option value="${l}" ${l===fromVal?"selected":""}>${l}</option>`).join("")}</select>
+      </div>
+      <div>
+        <label class="first">To</label>
+        <select id="filterTo"><option value="">All</option>${TO_LOCATIONS.map(l=>`<option value="${l}" ${l===toVal?"selected":""}>${l}</option>`).join("")}</select>
+      </div>
+    </div>
+    <div class="filter-row">
+      <div>
+        <label class="first">Start date</label>
+        <input type="date" id="filterStart" value="${startVal}" />
+      </div>
+      <div>
+        <label class="first">End date</label>
+        <input type="date" id="filterEnd" value="${endVal}" />
+      </div>
+    </div>
+    <div class="btn-row" style="margin-top:0;margin-bottom:16px;">
+      <button class="btn secondary full" id="exportBtn" type="button">Export CSV (${filtered.length})</button>
+    </div>
+    <div id="listArea"></div>
+  `;
+
+  ["filterFrom","filterTo","filterStart","filterEnd"].forEach(id => {
+    document.getElementById(id).addEventListener("change", renderHistoryList);
+  });
+  document.getElementById("exportBtn").onclick = () => exportCsv(filtered);
+
+  const listArea = document.getElementById("listArea");
+  if(filtered.length === 0){
+    listArea.innerHTML = `<div class="empty-state">No transfers match these filters.</div>`;
+    return;
+  }
+
+  listArea.innerHTML = filtered.map(t => {
+    const total = t.lines.reduce((s,l) => s + (Number(l.unit_price||0) * Number(l.quantity||0)), 0);
+    return `
+    <div class="transfer-card" id="card-${t.id}">
+      <div class="head" data-toggle="${t.id}">
+        <div>
+          <div class="route">${escapeHtml(t.from_location)} &rarr; ${escapeHtml(t.to_location)}</div>
+          <div class="meta">${fmtDateNZ(t.transfer_date)} ${t.transferred_by ? "· " + escapeHtml(t.transferred_by) : ""} · ${t.lines.length} item(s)</div>
+        </div>
+        <div style="text-align:right;">
+          <div class="meta">${fmtMoney(total)}</div>
+        </div>
+      </div>
+      <div class="body">
+        <table class="lines">
+          <tr><th>Item</th><th>Qty</th><th>Unit</th><th>Value</th></tr>
+          ${t.lines.map(l => `<tr>
+            <td>${escapeHtml(l.description)}</td>
+            <td>${l.quantity}</td>
+            <td>${escapeHtml(l.unit||"")}</td>
+            <td>${fmtMoney(Number(l.unit_price||0) * Number(l.quantity||0))}</td>
+          </tr>`).join("")}
+        </table>
+        ${t.notes ? `<div class="totals">Notes: ${escapeHtml(t.notes)}</div>` : ""}
+        <div class="btn-row">
+          <button class="btn outline small" data-delete="${t.id}" type="button">Delete transfer</button>
+        </div>
+      </div>
+    </div>
+  `;
+  }).join("");
+
+  listArea.querySelectorAll("[data-toggle]").forEach(el => {
+    el.addEventListener("click", () => {
+      document.getElementById("card-" + el.dataset.toggle).classList.toggle("open");
+    });
+  });
+  listArea.querySelectorAll("[data-delete]").forEach(el => {
+    el.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if(!confirm("Delete this transfer? This can't be undone.")) return;
+      const id = el.dataset.delete;
+      const { error } = await sb.from("stock_transfers").delete().eq("id", id);
+      if(error){ alert("Could not delete: " + error.message); return; }
+      historyCache = historyCache.filter(t => t.id !== id);
+      renderHistoryList();
+    });
+  });
+}
+
+function exportCsv(transfers){
+  const rows = [["Date","From","To","Transferred by","Item","Inventory ID","Quantity","Unit","Unit Price","Line Value","Notes"]];
+  transfers.forEach(t => {
+    if(t.lines.length === 0){
+      rows.push([fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"", "", "", "", "", "", "", t.notes||""]);
+    }
+    t.lines.forEach(l => {
+      rows.push([
+        fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"",
+        l.description, l.inventory_id||"", l.quantity, l.unit||"",
+        l.unit_price||"", (Number(l.unit_price||0)*Number(l.quantity||0)).toFixed(2), t.notes||""
+      ]);
+    });
+  });
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv], {type:"text/csv"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `stock-transfers-${todayISO()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/* ================= MANAGE ITEMS & PRICES SCREEN ================= */
+async function renderManageItems(){
+  setTitle("Manage Items & Prices");
+  app.innerHTML = `<div class="card"><div class="empty-state">Loading item list…</div></div>`;
+  await ensureInventoryLoaded();
+  app.innerHTML = `
+    <input type="text" class="search-box" id="itemSearch" placeholder="Search by name, group or inventory ID…" />
+    <div id="msgArea2"></div>
+    <div class="card" id="itemList" style="max-height:none;"></div>
+  `;
+  document.getElementById("itemSearch").addEventListener("input", renderItemList);
+  renderItemList();
+}
+
+function renderItemList(){
+  const q = (document.getElementById("itemSearch").value || "").toLowerCase().trim();
+  const list = inventoryItems.filter(i => {
+    if(!q) return true;
+    return i.description.toLowerCase().includes(q)
+      || (i.stock_group||"").toLowerCase().includes(q)
+      || (i.inventory_id||"").toLowerCase().includes(q)
+      || (i.type||"").toLowerCase().includes(q);
+  }).slice(0, 200);
+
+  const container = document.getElementById("itemList");
+  if(list.length === 0){
+    container.innerHTML = `<div class="empty-state">No items match your search.</div>`;
+    return;
+  }
+  container.innerHTML = list.map(i => `
+    <div class="item-admin-row ${i.discontinued ? "discontinued" : ""}" data-id="${i.id}">
+      <div class="desc">
+        <div class="name">${escapeHtml(i.description)} ${i.discontinued ? '<span class="pill warn">discontinued</span>' : ""}</div>
+        <div class="meta">${escapeHtml(i.inventory_id)} · ${escapeHtml(i.stock_group||"")} · ${escapeHtml(i.unit||"")}</div>
+      </div>
+      <input type="number" step="0.01" min="0" class="price-field" data-price-id="${i.id}" value="${i.unit_price ?? ""}" />
+      <button class="btn small" data-save-id="${i.id}" type="button">Save</button>
+      <span class="save-hint" data-hint-id="${i.id}"></span>
+    </div>
+  `).join("");
+
+  container.querySelectorAll("[data-save-id]").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const id = e.target.dataset.saveId;
+      const priceInput = container.querySelector(`[data-price-id="${id}"]`);
+      const newPrice = priceInput.value === "" ? null : Number(priceInput.value);
+      const hint = container.querySelector(`[data-hint-id="${id}"]`);
+      btn.disabled = true;
+      const { error } = await sb.from("inventory_items").update({ unit_price: newPrice, updated_at: new Date().toISOString() }).eq("id", id);
+      btn.disabled = false;
+      if(error){
+        hint.style.color = "var(--sd-red)";
+        hint.textContent = "Error saving";
+        return;
+      }
+      const item = inventoryItems.find(i => i.id === id);
+      if(item) item.unit_price = newPrice;
+      hint.style.color = "#12684a";
+      hint.textContent = "Saved ✓";
+      setTimeout(() => { if(hint.textContent === "Saved ✓") hint.textContent = ""; }, 2500);
+    });
+  });
+}
+
+/* ================= INIT ================= */
+render("home");
+</script>
+</body>
+</html>
