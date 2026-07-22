@@ -284,6 +284,7 @@ const FROM_LOCATIONS = [
   "Chemical Store", "Cafe Fridge", "Cafe Safe Room", "Office"
 ];
 const TO_LOCATIONS = ["Bowen", "Pride", "Spirit", "Stirling"];
+const UNIT_SUGGESTIONS = ["Each", "Carton", "Box", "Case", "Bag", "Pack", "Kg", "Litre", "Bottle", "Can", "Tub", "Tray", "Sleeve", "Packet"];
 
 const STATUS_LABELS = { pending: "Pending", completed: "Completed", declined: "Declined" };
 function statusPill(status){
@@ -399,7 +400,7 @@ async function renderHome(){
 }
 
 /* ================= NEW TRANSFER SCREEN ================= */
-function blankRow(){ return { search:"", inventory_item_id:null, inventory_id:null, description:"", unit:"", unit_price:null, quantity:"" }; }
+function blankRow(){ return { search:"", inventory_item_id:null, inventory_id:null, description:"", unit:"", purchaseUnit:"", unit_price:null, quantity:"" }; }
 
 async function renderNewTransfer(){
   setTitle("Request Transfer");
@@ -456,6 +457,13 @@ async function renderNewTransfer(){
     .filter(i => !i.discontinued)
     .map(i => `<option value="${escapeHtml(i.description)}"></option>`).join("");
 
+  if(!document.getElementById("unitOptions")){
+    const dlUnit = document.createElement("datalist");
+    dlUnit.id = "unitOptions";
+    dlUnit.innerHTML = UNIT_SUGGESTIONS.map(u => `<option value="${u}"></option>`).join("");
+    document.body.appendChild(dlUnit);
+  }
+
   renderItemRows();
   document.getElementById("addRowBtn").onclick = () => { newTransferRows.push(blankRow()); renderItemRows(); };
   document.getElementById("submitBtn").onclick = submitTransfer;
@@ -474,10 +482,11 @@ function renderItemRows(){
           <input type="number" min="0" step="any" class="item-qty" data-idx="${idx}" value="${row.quantity}" />
         </div>
         <div>
-          <label style="margin:0 0 4px;">Unit</label>
-          <div class="unit-display">${row.unit ? escapeHtml(row.unit) : "—"}</div>
+          <label style="margin:0 0 4px;">Unit for this transfer</label>
+          <input type="text" list="unitOptions" class="item-unit" data-idx="${idx}" value="${escapeHtml(row.unit || "")}" placeholder="e.g. Each" autocomplete="off" />
         </div>
       </div>
+      ${row.purchaseUnit && row.purchaseUnit !== row.unit ? `<div class="req-qty" style="margin-top:4px;">Purchased as: ${escapeHtml(row.purchaseUnit)}</div>` : ""}
     </div>
   `).join("");
 
@@ -492,10 +501,12 @@ function renderItemRows(){
         newTransferRows[idx].inventory_id = match.inventory_id;
         newTransferRows[idx].description = match.description;
         newTransferRows[idx].unit = match.unit;
+        newTransferRows[idx].purchaseUnit = match.unit;
         newTransferRows[idx].unit_price = match.unit_price;
       } else {
         newTransferRows[idx].inventory_item_id = null;
         newTransferRows[idx].unit = "";
+        newTransferRows[idx].purchaseUnit = "";
       }
       renderItemRows();
       // restore focus/cursor after re-render
@@ -506,6 +517,11 @@ function renderItemRows(){
   wrap.querySelectorAll(".item-qty").forEach(inp => {
     inp.addEventListener("input", (e) => {
       newTransferRows[Number(e.target.dataset.idx)].quantity = e.target.value;
+    });
+  });
+  wrap.querySelectorAll(".item-unit").forEach(inp => {
+    inp.addEventListener("input", (e) => {
+      newTransferRows[Number(e.target.dataset.idx)].unit = e.target.value;
     });
   });
   wrap.querySelectorAll("[data-remove]").forEach(btn => {
@@ -557,6 +573,7 @@ async function submitTransfer(){
     inventory_id: r.inventory_id,
     description: r.description,
     unit: r.unit,
+    purchase_unit: r.purchaseUnit || r.unit,
     unit_price: r.unit_price,
     quantity: Number(r.quantity)
   }));
@@ -618,7 +635,7 @@ function renderPendingList(){
       ${t.lines.map(l => `
         <div class="pending-line" data-line="${l.id}">
           <div class="name">${escapeHtml(l.description)}</div>
-          <div class="req-qty">Requested: ${l.quantity} ${escapeHtml(l.unit||"")}</div>
+          <div class="req-qty">Requested: ${l.quantity} ${escapeHtml(l.unit||"")}${l.purchase_unit && l.purchase_unit !== l.unit ? ` <em>(purchased as ${escapeHtml(l.purchase_unit)})</em>` : ""}</div>
           <input type="number" min="0" step="any" class="actual-qty" data-actual-id="${l.id}" value="${l.quantity}" />
         </div>
       `).join("")}
@@ -799,7 +816,7 @@ function renderHistoryList(){
             <td>${escapeHtml(l.description)}</td>
             <td>${l.quantity}</td>
             <td>${l.actual_quantity ?? "—"}</td>
-            <td>${escapeHtml(l.unit||"")}</td>
+            <td>${escapeHtml(l.unit||"")}${l.purchase_unit && l.purchase_unit !== l.unit ? `<br><span style="color:#888;font-size:11px;">purchased as ${escapeHtml(l.purchase_unit)}</span>` : ""}</td>
             <td>${fmtMoney(Number(l.unit_price||0) * Number(l.actual_quantity ?? l.quantity ?? 0))}</td>
           </tr>`).join("")}
         </table>
@@ -832,16 +849,16 @@ function renderHistoryList(){
 }
 
 function exportCsv(transfers){
-  const rows = [["Date","From","To","Requested by","Status","Completed/Declined by","Item","Inventory ID","Requested Qty","Actual Qty","Unit","Unit Price","Line Value","Notes","Decline Reason"]];
+  const rows = [["Date","From","To","Requested by","Status","Completed/Declined by","Item","Inventory ID","Requested Qty","Actual Qty","Transfer Unit","Purchase Unit","Unit Price","Line Value","Notes","Decline Reason"]];
   transfers.forEach(t => {
     if(t.lines.length === 0){
-      rows.push([fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"", t.status, t.completed_by||"", "", "", "", "", "", "", "", t.notes||"", t.decline_reason||""]);
+      rows.push([fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"", t.status, t.completed_by||"", "", "", "", "", "", "", "", "", t.notes||"", t.decline_reason||""]);
     }
     t.lines.forEach(l => {
       const actual = l.actual_quantity ?? l.quantity;
       rows.push([
         fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"", t.status, t.completed_by||"",
-        l.description, l.inventory_id||"", l.quantity, l.actual_quantity ?? "", l.unit||"",
+        l.description, l.inventory_id||"", l.quantity, l.actual_quantity ?? "", l.unit||"", l.purchase_unit||"",
         l.unit_price||"", (Number(l.unit_price||0)*Number(actual||0)).toFixed(2), t.notes||"", t.decline_reason||""
       ]);
     });
