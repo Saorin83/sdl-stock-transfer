@@ -286,6 +286,20 @@ const FROM_LOCATIONS = [
 const TO_LOCATIONS = ["Bowen", "Pride", "Spirit", "Stirling"];
 const UNIT_SUGGESTIONS = ["Each", "Carton", "Box", "Case", "Bag", "Pack", "Kg", "Litre", "Bottle", "Can", "Tub", "Tray", "Sleeve", "Packet"];
 
+// Best-guess mapping of which stock groups are kept in which store room, based on
+// typical hospitality storage (not the stocktake sheet, which doesn't reliably tag
+// store rooms). Tell me about any miscategorised items and this list gets updated.
+const LOCATION_STOCK_GROUPS = {
+  "Dry Store": ["Dry Goods", "Packaging", "Guest Supply", "Souvenirs", "International", "Misc Food", "SOM Coffee", "Buffet", "Picnic"],
+  "Walk in Fridge": ["Dairy", "Fruit & Vegetables", "Bowmont Meats", "Gourmet", "Cafe Food", "Buffet", "Picnic"],
+  "Walk in Freezer": ["Seafood", "Bakery", "Japanese", "Bowmont Meats", "Buffet", "Picnic"],
+  "Beverage Fridge": ["Beverage"],
+  "Chemical Store": ["Chemical"],
+  "Cafe Fridge": ["Cafe Food", "Dairy", "Bakery", "Beverage"],
+  "Cafe Safe Room": ["Beverage"],
+  "Office": ["Guest Supply", "Packaging"]
+};
+
 const STATUS_LABELS = { pending: "Pending", completed: "Completed", declined: "Declined" };
 function statusPill(status){
   const cls = status === "completed" ? "pill-completed" : status === "declined" ? "pill-declined" : "pill-pending";
@@ -433,6 +447,7 @@ async function renderNewTransfer(){
 
     <div class="card">
       <label class="first" style="margin-bottom:8px;">Items</label>
+      <div id="itemFilterHint" style="font-size:12px;color:#666;margin-bottom:8px;"></div>
       <div id="itemRows"></div>
       <button class="btn outline full" id="addRowBtn" type="button">+ Add another item</button>
     </div>
@@ -453,9 +468,8 @@ async function renderNewTransfer(){
     dl.id = datalistId;
     document.body.appendChild(dl);
   }
-  document.getElementById(datalistId).innerHTML = inventoryItems
-    .filter(i => !i.discontinued)
-    .map(i => `<option value="${escapeHtml(i.description)}"></option>`).join("");
+  refreshItemOptions(document.getElementById("fromLoc").value);
+  document.getElementById("fromLoc").addEventListener("change", (e) => refreshItemOptions(e.target.value));
 
   if(!document.getElementById("unitOptions")){
     const dlUnit = document.createElement("datalist");
@@ -467,6 +481,20 @@ async function renderNewTransfer(){
   renderItemRows();
   document.getElementById("addRowBtn").onclick = () => { newTransferRows.push(blankRow()); renderItemRows(); };
   document.getElementById("submitBtn").onclick = submitTransfer;
+}
+
+function refreshItemOptions(fromLoc){
+  const allowedGroups = LOCATION_STOCK_GROUPS[fromLoc];
+  const list = inventoryItems.filter(i => {
+    if(i.discontinued) return false;
+    if(!allowedGroups) return true; // no location chosen yet — show everything
+    return allowedGroups.includes(i.stock_group);
+  });
+  document.getElementById("itemOptions").innerHTML = list.map(i => `<option value="${escapeHtml(i.description)}"></option>`).join("");
+  const hint = document.getElementById("itemFilterHint");
+  if(hint){
+    hint.textContent = fromLoc ? `Showing items typically kept in ${fromLoc} (${list.length} of ${inventoryItems.length}). Can't find something? Type its full name anyway.` : "";
+  }
 }
 
 function renderItemRows(){
@@ -874,16 +902,114 @@ function exportCsv(transfers){
 }
 
 /* ================= MANAGE ITEMS & PRICES SCREEN ================= */
+function nextInventoryId(){
+  let max = 0;
+  inventoryItems.forEach(i => {
+    const m = /^IN(\d+)$/i.exec((i.inventory_id||"").trim());
+    if(m){ max = Math.max(max, parseInt(m[1], 10)); }
+  });
+  return "IN" + String(max + 1).padStart(4, "0");
+}
+
 async function renderManageItems(){
   setTitle("Manage Items & Prices");
   app.innerHTML = `<div class="card"><div class="empty-state">Loading item list…</div></div>`;
   await ensureInventoryLoaded();
   app.innerHTML = `
+    <div class="btn-row" style="margin-top:0;margin-bottom:14px;">
+      <button class="btn secondary full" id="showAddItemBtn" type="button">+ Add New Item</button>
+    </div>
+    <div class="card" id="addItemForm" style="display:none;">
+      <label class="first">Inventory ID</label>
+      <input type="text" id="newItemId" value="${nextInventoryId()}" />
+      <label>Description</label>
+      <input type="text" id="newItemDesc" placeholder="e.g. Coca Cola 330ML" />
+      <label>Purchase unit</label>
+      <input type="text" id="newItemUnit" placeholder="e.g. 24/CTN, 1KG/BAG, Each" />
+      <label>Unit price</label>
+      <input type="number" step="0.01" min="0" id="newItemPrice" placeholder="0.00" />
+      <label>Stock group</label>
+      <input type="text" id="newItemGroup" list="stockGroupOptions" placeholder="e.g. Beverage, Dry Goods" />
+      <label>Supplier (optional)</label>
+      <input type="text" id="newItemSupplier" />
+      <div id="addItemMsg"></div>
+      <div class="btn-row">
+        <button class="btn full" id="saveNewItemBtn" type="button">Save Item</button>
+        <button class="btn outline full" id="cancelNewItemBtn" type="button">Cancel</button>
+      </div>
+    </div>
     <input type="text" class="search-box" id="itemSearch" placeholder="Search by name, group or inventory ID…" />
     <div id="msgArea2"></div>
     <div class="card" id="itemList" style="max-height:none;"></div>
   `;
+
+  const stockGroups = [...new Set(inventoryItems.map(i => i.stock_group).filter(Boolean))].sort();
+  if(!document.getElementById("stockGroupOptions")){
+    const dl = document.createElement("datalist");
+    dl.id = "stockGroupOptions";
+    document.body.appendChild(dl);
+  }
+  document.getElementById("stockGroupOptions").innerHTML = stockGroups.map(g => `<option value="${escapeHtml(g)}"></option>`).join("");
+
+  document.getElementById("showAddItemBtn").onclick = () => {
+    document.getElementById("newItemId").value = nextInventoryId();
+    document.getElementById("addItemForm").style.display = "block";
+    document.getElementById("showAddItemBtn").style.display = "none";
+  };
+  document.getElementById("cancelNewItemBtn").onclick = () => {
+    document.getElementById("addItemForm").style.display = "none";
+    document.getElementById("showAddItemBtn").style.display = "block";
+  };
+  document.getElementById("saveNewItemBtn").onclick = saveNewItem;
+
   document.getElementById("itemSearch").addEventListener("input", renderItemList);
+  renderItemList();
+}
+
+async function saveNewItem(){
+  const inventory_id = document.getElementById("newItemId").value.trim();
+  const description = document.getElementById("newItemDesc").value.trim();
+  const unit = document.getElementById("newItemUnit").value.trim();
+  const priceVal = document.getElementById("newItemPrice").value;
+  const stock_group = document.getElementById("newItemGroup").value.trim();
+  const supplier = document.getElementById("newItemSupplier").value.trim();
+  const msg = document.getElementById("addItemMsg");
+
+  if(!inventory_id || !description){
+    msg.innerHTML = `<div class="msg error">Inventory ID and Description are required.</div>`;
+    return;
+  }
+  if(inventoryItems.some(i => (i.inventory_id||"").toLowerCase() === inventory_id.toLowerCase())){
+    msg.innerHTML = `<div class="msg error">Inventory ID "${escapeHtml(inventory_id)}" already exists — pick a different one.</div>`;
+    return;
+  }
+
+  const saveBtn = document.getElementById("saveNewItemBtn");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Saving…";
+
+  const { data, error } = await sb.from("inventory_items").insert({
+    inventory_id,
+    description,
+    unit: unit || null,
+    unit_price: priceVal === "" ? null : Number(priceVal),
+    stock_group: stock_group || null,
+    supplier: supplier || null,
+    discontinued: false
+  }).select().single();
+
+  saveBtn.disabled = false;
+  saveBtn.textContent = "Save Item";
+
+  if(error){
+    msg.innerHTML = `<div class="msg error">Could not save item: ${escapeHtml(error.message)}</div>`;
+    return;
+  }
+
+  inventoryItems.push(data);
+  document.getElementById("addItemForm").style.display = "none";
+  document.getElementById("showAddItemBtn").style.display = "block";
+  document.getElementById("msgArea2").innerHTML = `<div class="msg success">Added "${escapeHtml(description)}" (${escapeHtml(inventory_id)}).</div>`;
   renderItemList();
 }
 
