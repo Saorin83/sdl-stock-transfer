@@ -300,10 +300,38 @@ const LOCATION_STOCK_GROUPS = {
   "Office": ["Guest Supply", "Packaging"]
 };
 
+// Reverse of LOCATION_STOCK_GROUPS: best single guess of "where does this
+// stock group normally live" so we can auto-fill From once someone picks an
+// item, for people who don't know which store room something is kept in.
+const STOCK_GROUP_PRIMARY_LOCATION = {};
+FROM_LOCATIONS.forEach(loc => {
+  (LOCATION_STOCK_GROUPS[loc] || []).forEach(group => {
+    if(!(group in STOCK_GROUP_PRIMARY_LOCATION)) STOCK_GROUP_PRIMARY_LOCATION[group] = loc;
+  });
+});
+
 const STATUS_LABELS = { pending: "Pending", completed: "Completed", declined: "Declined" };
 function statusPill(status){
   const cls = status === "completed" ? "pill-completed" : status === "declined" ? "pill-declined" : "pill-pending";
   return `<span class="pill ${cls}">${STATUS_LABELS[status] || status}</span>`;
+}
+
+// Works out the $ value of a transfer line, converting units where possible.
+// Returns null when we genuinely can't calculate it (unknown unit conversion)
+// rather than silently showing a wrong number.
+// Note: alt_unit_price is a direct $ price for one alt_unit (not a ratio) -
+// this avoids any "which direction do I divide" confusion, since some items
+// are priced per each and others per carton/box with no fixed rule.
+function lineValue(l){
+  const qty = Number(l.actual_quantity ?? l.quantity ?? 0);
+  if(!l.unit || !l.purchase_unit || l.unit === l.purchase_unit){
+    if(l.unit_price === null || l.unit_price === undefined) return null;
+    return Number(l.unit_price) * qty;
+  }
+  if(l.alt_unit && l.unit === l.alt_unit && l.alt_unit_price !== null && l.alt_unit_price !== undefined){
+    return Number(l.alt_unit_price) * qty;
+  }
+  return null;
 }
 
 /* ================= STATE ================= */
@@ -414,7 +442,7 @@ async function renderHome(){
 }
 
 /* ================= NEW TRANSFER SCREEN ================= */
-function blankRow(){ return { search:"", inventory_item_id:null, inventory_id:null, description:"", unit:"", purchaseUnit:"", unit_price:null, quantity:"" }; }
+function blankRow(){ return { search:"", inventory_item_id:null, inventory_id:null, description:"", unit:"", purchaseUnit:"", altUnit:"", altUnitPrice:null, unit_price:null, quantity:"" }; }
 
 async function renderNewTransfer(){
   setTitle("Request Transfer");
@@ -428,9 +456,10 @@ async function renderNewTransfer(){
     <div class="card">
       <label class="first">From (store location)</label>
       <select id="fromLoc">
-        <option value="">Select…</option>
+        <option value="">Not sure — I'll pick the item first</option>
         ${FROM_LOCATIONS.map(l => `<option value="${l}">${l}</option>`).join("")}
       </select>
+      <div id="fromAutoHint" style="font-size:12px;color:#666;margin-top:4px;"></div>
 
       <label>To (boat)</label>
       <select id="toLoc">
@@ -469,7 +498,11 @@ async function renderNewTransfer(){
     document.body.appendChild(dl);
   }
   refreshItemOptions(document.getElementById("fromLoc").value);
-  document.getElementById("fromLoc").addEventListener("change", (e) => refreshItemOptions(e.target.value));
+  document.getElementById("fromLoc").addEventListener("change", (e) => {
+    refreshItemOptions(e.target.value);
+    const hint = document.getElementById("fromAutoHint");
+    if(hint) hint.textContent = "";
+  });
 
   if(!document.getElementById("unitOptions")){
     const dlUnit = document.createElement("datalist");
@@ -530,11 +563,27 @@ function renderItemRows(){
         newTransferRows[idx].description = match.description;
         newTransferRows[idx].unit = match.unit;
         newTransferRows[idx].purchaseUnit = match.unit;
+        newTransferRows[idx].altUnit = match.alt_unit || "";
+        newTransferRows[idx].altUnitPrice = match.alt_unit_price ?? null;
         newTransferRows[idx].unit_price = match.unit_price;
+
+        // Don't know which store room? Fill it in for them once they pick an item.
+        const fromSelect = document.getElementById("fromLoc");
+        if(fromSelect && !fromSelect.value){
+          const suggested = STOCK_GROUP_PRIMARY_LOCATION[match.stock_group];
+          if(suggested){
+            fromSelect.value = suggested;
+            refreshItemOptions(suggested);
+            const hint = document.getElementById("fromAutoHint");
+            if(hint) hint.textContent = `Set to "${suggested}" based on "${match.description}" — change it above if that's not right.`;
+          }
+        }
       } else {
         newTransferRows[idx].inventory_item_id = null;
         newTransferRows[idx].unit = "";
         newTransferRows[idx].purchaseUnit = "";
+        newTransferRows[idx].altUnit = "";
+        newTransferRows[idx].altUnitPrice = null;
       }
       renderItemRows();
       // restore focus/cursor after re-render
@@ -602,6 +651,8 @@ async function submitTransfer(){
     description: r.description,
     unit: r.unit,
     purchase_unit: r.purchaseUnit || r.unit,
+    alt_unit: r.altUnit || null,
+    alt_unit_price: r.altUnitPrice ?? null,
     unit_price: r.unit_price,
     quantity: Number(r.quantity)
   }));
@@ -824,7 +875,12 @@ function renderHistoryList(){
   }
 
   listArea.innerHTML = filtered.map(t => {
-    const total = t.lines.reduce((s,l) => s + (Number(l.unit_price||0) * Number(l.actual_quantity ?? l.quantity ?? 0)), 0);
+    let hasUnknown = false;
+    const total = t.lines.reduce((s,l) => {
+      const v = lineValue(l);
+      if(v === null){ hasUnknown = true; return s; }
+      return s + v;
+    }, 0);
     return `
     <div class="transfer-card" id="card-${t.id}">
       <div class="head" data-toggle="${t.id}">
@@ -834,20 +890,21 @@ function renderHistoryList(){
           ${t.completed_by ? `<div class="meta">${t.status === "declined" ? "Declined" : "Completed"} by ${escapeHtml(t.completed_by)}</div>` : ""}
         </div>
         <div style="text-align:right;">
-          <div class="meta">${fmtMoney(total)}</div>
+          <div class="meta">${fmtMoney(total)}${hasUnknown ? "+" : ""}</div>
         </div>
       </div>
       <div class="body">
         <table class="lines">
           <tr><th>Item</th><th>Requested</th><th>Actual</th><th>Unit</th><th>Value</th></tr>
-          ${t.lines.map(l => `<tr>
+          ${t.lines.map(l => { const v = lineValue(l); return `<tr>
             <td>${escapeHtml(l.description)}</td>
             <td>${l.quantity}</td>
             <td>${l.actual_quantity ?? "—"}</td>
             <td>${escapeHtml(l.unit||"")}${l.purchase_unit && l.purchase_unit !== l.unit ? `<br><span style="color:#888;font-size:11px;">purchased as ${escapeHtml(l.purchase_unit)}</span>` : ""}</td>
-            <td>${fmtMoney(Number(l.unit_price||0) * Number(l.actual_quantity ?? l.quantity ?? 0))}</td>
-          </tr>`).join("")}
+            <td>${v === null ? "—" : fmtMoney(v)}</td>
+          </tr>`; }).join("")}
         </table>
+        ${hasUnknown ? `<div class="totals">+ some items above show "—" — no unit conversion set for that item yet, so their value isn't included in the total. Add one in Manage Items &amp; Prices.</div>` : ""}
         ${t.notes ? `<div class="totals">Notes: ${escapeHtml(t.notes)}</div>` : ""}
         ${t.decline_reason ? `<div class="totals">Decline reason: ${escapeHtml(t.decline_reason)}</div>` : ""}
         <div class="btn-row">
@@ -883,11 +940,11 @@ function exportCsv(transfers){
       rows.push([fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"", t.status, t.completed_by||"", "", "", "", "", "", "", "", "", t.notes||"", t.decline_reason||""]);
     }
     t.lines.forEach(l => {
-      const actual = l.actual_quantity ?? l.quantity;
+      const v = lineValue(l);
       rows.push([
         fmtDateNZ(t.transfer_date), t.from_location, t.to_location, t.transferred_by||"", t.status, t.completed_by||"",
         l.description, l.inventory_id||"", l.quantity, l.actual_quantity ?? "", l.unit||"", l.purchase_unit||"",
-        l.unit_price||"", (Number(l.unit_price||0)*Number(actual||0)).toFixed(2), t.notes||"", t.decline_reason||""
+        l.unit_price||"", v === null ? "unknown (no unit conversion set)" : v.toFixed(2), t.notes||"", t.decline_reason||""
       ]);
     });
   });
@@ -1028,8 +1085,15 @@ function renderItemList(){
     container.innerHTML = `<div class="empty-state">No items match your search.</div>`;
     return;
   }
+  if(!document.getElementById("unitOptions")){
+    const dlUnit = document.createElement("datalist");
+    dlUnit.id = "unitOptions";
+    dlUnit.innerHTML = UNIT_SUGGESTIONS.map(u => `<option value="${u}"></option>`).join("");
+    document.body.appendChild(dlUnit);
+  }
+
   container.innerHTML = list.map(i => `
-    <div class="item-admin-row ${i.discontinued ? "discontinued" : ""}" data-id="${i.id}">
+    <div class="item-admin-row ${i.discontinued ? "discontinued" : ""}" data-id="${i.id}" style="flex-wrap:wrap;">
       <div class="desc">
         <div class="name">${escapeHtml(i.description)} ${i.discontinued ? '<span class="pill warn">discontinued</span>' : ""}</div>
         <div class="meta">${escapeHtml(i.inventory_id)} · ${escapeHtml(i.stock_group||"")} · ${escapeHtml(i.unit||"")}</div>
@@ -1037,6 +1101,14 @@ function renderItemList(){
       <input type="number" step="0.01" min="0" class="price-field" data-price-id="${i.id}" value="${i.unit_price ?? ""}" />
       <button class="btn small" data-save-id="${i.id}" type="button">Save</button>
       <span class="save-hint" data-hint-id="${i.id}"></span>
+      <div style="flex-basis:100%;font-size:12px;color:#666;display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px;">
+        <span>Also priced as:</span>
+        <input type="text" list="unitOptions" class="alt-unit-field" data-altunit-id="${i.id}" value="${escapeHtml(i.alt_unit||"")}" placeholder="e.g. Carton" style="width:110px;padding:4px;" />
+        <span>=</span>
+        <span>$</span>
+        <input type="number" min="0" step="0.01" class="alt-price-field" data-altprice-id="${i.id}" value="${i.alt_unit_price ?? ""}" placeholder="0.00" style="width:80px;padding:4px;" />
+        <span style="color:#999;">(optional — e.g. if this is $${i.unit_price ?? "?"} per ${escapeHtml(i.unit||"unit")} but staff sometimes request a whole carton, type its actual price here)</span>
+      </div>
     </div>
   `).join("");
 
@@ -1045,9 +1117,15 @@ function renderItemList(){
       const id = e.target.dataset.saveId;
       const priceInput = container.querySelector(`[data-price-id="${id}"]`);
       const newPrice = priceInput.value === "" ? null : Number(priceInput.value);
+      const altUnitInput = container.querySelector(`[data-altunit-id="${id}"]`);
+      const altPriceInput = container.querySelector(`[data-altprice-id="${id}"]`);
+      const newAltUnit = altUnitInput.value.trim() || null;
+      const newAltPrice = altPriceInput.value === "" ? null : Number(altPriceInput.value);
       const hint = container.querySelector(`[data-hint-id="${id}"]`);
       btn.disabled = true;
-      const { error } = await sb.from("inventory_items").update({ unit_price: newPrice, updated_at: new Date().toISOString() }).eq("id", id);
+      const { error } = await sb.from("inventory_items").update({
+        unit_price: newPrice, alt_unit: newAltUnit, alt_unit_price: newAltPrice, updated_at: new Date().toISOString()
+      }).eq("id", id);
       btn.disabled = false;
       if(error){
         hint.style.color = "var(--sd-red)";
@@ -1055,7 +1133,7 @@ function renderItemList(){
         return;
       }
       const item = inventoryItems.find(i => i.id === id);
-      if(item) item.unit_price = newPrice;
+      if(item){ item.unit_price = newPrice; item.alt_unit = newAltUnit; item.alt_unit_price = newAltPrice; }
       hint.style.color = "#12684a";
       hint.textContent = "Saved ✓";
       setTimeout(() => { if(hint.textContent === "Saved ✓") hint.textContent = ""; }, 2500);
