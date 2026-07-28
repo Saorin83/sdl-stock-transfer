@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
 <title>SDL Stock Transfer</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
   :root{
     --sd-red:#910035;
@@ -278,6 +279,30 @@ const SUPABASE_ANON_KEY = "sb_publishable_9jLxLxxfqWIfraeLNm3dQg_HaTI50bX";
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+/* ---- Email notifications (via EmailJS - see setup instructions) ----
+   1. Create a free account at emailjs.com and connect your Outlook.
+   2. Create one email template with variables: to_email, subject, message.
+   3. Paste your Service ID, Template ID and Public Key below. */
+const EMAILJS_SERVICE_ID = "YOUR_SERVICE_ID";
+const EMAILJS_TEMPLATE_ID = "YOUR_TEMPLATE_ID";
+const EMAILJS_PUBLIC_KEY = "YOUR_PUBLIC_KEY";
+const NOTIFY_REQUEST_EMAIL = "fb@southerndiscoveries.co.nz";   // notified when a request is placed
+const NOTIFY_COMPLETED_EMAIL = "finance@southerndiscoveries.co.nz"; // notified when a transfer is completed (ready to export)
+
+const emailjsReady = ![EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY].some(v => !v || v.startsWith("YOUR_"));
+if(emailjsReady && window.emailjs){ emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY }); }
+
+// Sends a notification email. Never blocks or breaks the main flow if it
+// fails or hasn't been set up yet - transfers still save fine either way.
+async function sendNotification(toEmail, subject, message){
+  if(!emailjsReady){ console.warn("Email notifications not set up yet - skipping:", subject); return; }
+  try{
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, { to_email: toEmail, subject, message });
+  }catch(err){
+    console.warn("Notification email failed to send:", err);
+  }
+}
+
 /* ================= STATIC DATA ================= */
 const TO_LOCATIONS = ["Bowen", "Pride", "Spirit", "Stirling", "Cafe", "Staff Kitchen"];
 const UNIT_SUGGESTIONS = ["Each", "Carton", "Box", "Case", "Bag", "Pack", "Kg", "Litre", "Bottle", "Can", "Tub", "Tray", "Sleeve", "Packet"];
@@ -449,7 +474,7 @@ async function renderNewTransfer(){
 
     <div class="card">
       <label class="first" style="margin-bottom:8px;">Items</label>
-      <div style="font-size:12px;color:#666;margin-bottom:8px;">Each item's stock category is set automatically once you find it — change it if it looks wrong.</div>
+      <div style="font-size:12px;color:#666;margin-bottom:8px;">Pick a stock category to narrow the item list, or leave it and it'll be set automatically once you find the item.</div>
       <div id="itemRows"></div>
       <button class="btn outline full" id="addRowBtn" type="button">+ Add another item</button>
     </div>
@@ -464,14 +489,6 @@ async function renderNewTransfer(){
     </div>
   `;
 
-  const datalistId = "itemOptions";
-  if(!document.getElementById(datalistId)){
-    const dl = document.createElement("datalist");
-    dl.id = datalistId;
-    document.body.appendChild(dl);
-  }
-  refreshItemOptions();
-
   if(!document.getElementById("unitOptions")){
     const dlUnit = document.createElement("datalist");
     dlUnit.id = "unitOptions";
@@ -484,9 +501,13 @@ async function renderNewTransfer(){
   document.getElementById("submitBtn").onclick = submitTransfer;
 }
 
-function refreshItemOptions(){
-  const list = inventoryItems.filter(i => !i.discontinued);
-  document.getElementById("itemOptions").innerHTML = list.map(i => `<option value="${escapeHtml(i.description)}"></option>`).join("");
+// Items shown for a row - narrowed to the chosen stock category if one's
+// been picked, otherwise the full list (so typing still works either way).
+function itemsForCategory(fromLoc){
+  return inventoryItems.filter(i => !i.discontinued && (!fromLoc || i.stock_group === fromLoc));
+}
+function itemDatalistOptions(fromLoc){
+  return itemsForCategory(fromLoc).map(i => `<option value="${escapeHtml(i.description)}"></option>`).join("");
 }
 
 // Builds the list of valid transfer-unit choices for a matched item: its
@@ -509,8 +530,17 @@ function renderItemRows(){
   wrap.innerHTML = newTransferRows.map((row, idx) => `
     <div class="item-row" data-idx="${idx}">
       ${newTransferRows.length > 1 ? `<button type="button" class="remove-row" data-remove="${idx}">&times;</button>` : ""}
-      <label class="first">Item</label>
-      <input type="text" list="itemOptions" class="item-search" data-idx="${idx}" placeholder="Start typing an item name…" value="${escapeHtml(row.search)}" autocomplete="off" />
+      <label class="first">From (stock category)</label>
+      <select class="item-from" data-idx="${idx}">
+        <option value="">Not sure — I'll pick the item first</option>
+        ${stockCategories().map(c => `<option value="${escapeHtml(c)}" ${c===row.fromLoc?"selected":""}>${escapeHtml(c)}</option>`).join("")}
+      </select>
+      <div id="itemCatHint-${idx}" style="font-size:11px;color:#666;margin-top:2px;">${row.fromLoc ? `Showing ${itemsForCategory(row.fromLoc).length} item(s) in ${escapeHtml(row.fromLoc)}. Can't find something? Clear the category above to search everything.` : ""}</div>
+
+      <label style="margin-top:10px;">Item</label>
+      <input type="text" list="itemOptions-${idx}" class="item-search" data-idx="${idx}" placeholder="Start typing an item name…" value="${escapeHtml(row.search)}" autocomplete="off" />
+      <datalist id="itemOptions-${idx}">${itemDatalistOptions(row.fromLoc)}</datalist>
+
       <div class="qty-unit" style="margin-top:8px;">
         <div>
           <label style="margin:0 0 4px;">Quantity</label>
@@ -527,11 +557,6 @@ function renderItemRows(){
           `}
         </div>
       </div>
-      <label style="margin:10px 0 4px;">From (stock category)</label>
-      <select class="item-from" data-idx="${idx}">
-        <option value="">Not sure — I'll pick the item first</option>
-        ${stockCategories().map(c => `<option value="${escapeHtml(c)}" ${c===row.fromLoc?"selected":""}>${escapeHtml(c)}</option>`).join("")}
-      </select>
     </div>
   `).join("");
 
@@ -579,7 +604,14 @@ function renderItemRows(){
   });
   wrap.querySelectorAll("select.item-from").forEach(sel => {
     sel.addEventListener("change", (e) => {
-      newTransferRows[Number(e.target.dataset.idx)].fromLoc = e.target.value;
+      const idx = Number(e.target.dataset.idx);
+      const fromLoc = e.target.value;
+      newTransferRows[idx].fromLoc = fromLoc;
+      // Narrow that row's item list live, without a full re-render (keeps focus put).
+      const dl = document.getElementById(`itemOptions-${idx}`);
+      if(dl) dl.innerHTML = itemDatalistOptions(fromLoc);
+      const hint = document.getElementById(`itemCatHint-${idx}`);
+      if(hint) hint.textContent = fromLoc ? `Showing ${itemsForCategory(fromLoc).length} item(s) in ${fromLoc}. Can't find something? Clear the category above to search everything.` : "";
     });
   });
   wrap.querySelectorAll("[data-remove]").forEach(btn => {
@@ -665,6 +697,13 @@ async function submitTransfer(){
   newTransferRows = [blankRow()];
   const plural = fromLocs.length > 1 ? `${fromLocs.length} requests submitted` : "Request submitted";
   showMsg(`${plural} — ${summaries.join(", ")} to ${toLoc}. Store staff will review under Pending Requests.`, "success");
+
+  sendNotification(
+    NOTIFY_REQUEST_EMAIL,
+    `New stock transfer request${fromLocs.length > 1 ? "s" : ""} to ${toLoc}`,
+    `${summaries.join(", ")} — requested by ${byWho || "someone"} for ${fmtDateNZ(date)}. Notes: ${notes || "(none)"}. Open the Stock Transfer app > Pending Requests to review.`
+  );
+
   document.getElementById("byWho").value = "";
   document.getElementById("notes").value = "";
   renderItemRows();
@@ -764,6 +803,12 @@ async function completePending(transferId){
     completed_by: staffName
   }).eq("id", transferId);
   if(error){ alert("Could not complete request: " + error.message); return; }
+
+  sendNotification(
+    NOTIFY_COMPLETED_EMAIL,
+    `Stock transfer completed — ${t.from_location} to ${t.to_location}`,
+    `${t.lines.length} item(s) sent from ${t.from_location} to ${t.to_location} on ${fmtDateNZ(t.transfer_date)}, completed by ${staffName}. Ready to export in Transfer History.`
+  );
 
   pendingCache = pendingCache.filter(x => x.id !== transferId);
   renderPendingList();
