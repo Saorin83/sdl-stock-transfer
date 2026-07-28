@@ -322,13 +322,14 @@ function statusPill(status){
 // Note: alt_unit_price is a direct $ price for one alt_unit (not a ratio) -
 // this avoids any "which direction do I divide" confusion, since some items
 // are priced per each and others per carton/box with no fixed rule.
+function normUnit(s){ return String(s || "").trim().toLowerCase(); }
 function lineValue(l){
   const qty = Number(l.actual_quantity ?? l.quantity ?? 0);
-  if(!l.unit || !l.purchase_unit || l.unit === l.purchase_unit){
+  if(!l.unit || !l.purchase_unit || normUnit(l.unit) === normUnit(l.purchase_unit)){
     if(l.unit_price === null || l.unit_price === undefined) return null;
     return Number(l.unit_price) * qty;
   }
-  if(l.alt_unit && l.unit === l.alt_unit && l.alt_unit_price !== null && l.alt_unit_price !== undefined){
+  if(l.alt_unit && normUnit(l.unit) === normUnit(l.alt_unit) && l.alt_unit_price !== null && l.alt_unit_price !== undefined){
     return Number(l.alt_unit_price) * qty;
   }
   return null;
@@ -530,6 +531,21 @@ function refreshItemOptions(fromLoc){
   }
 }
 
+// Builds the list of valid transfer-unit choices for a matched item: its
+// purchase unit, plus its alt unit (with price shown) if one is set.
+// Using a fixed dropdown instead of free text means the value always
+// matches exactly what's stored against the item - no case/typo mismatches
+// that would silently stop the $ value from calculating.
+function unitChoiceOptions(row){
+  const opts = [];
+  if(row.purchaseUnit) opts.push({ value: row.purchaseUnit, label: row.purchaseUnit });
+  if(row.altUnit && row.altUnit !== row.purchaseUnit){
+    const priceLabel = (row.altUnitPrice !== null && row.altUnitPrice !== undefined) ? ` ($${Number(row.altUnitPrice).toFixed(2)})` : "";
+    opts.push({ value: row.altUnit, label: `${row.altUnit}${priceLabel}` });
+  }
+  return opts;
+}
+
 function renderItemRows(){
   const wrap = document.getElementById("itemRows");
   wrap.innerHTML = newTransferRows.map((row, idx) => `
@@ -544,10 +560,15 @@ function renderItemRows(){
         </div>
         <div>
           <label style="margin:0 0 4px;">Unit for this transfer</label>
-          <input type="text" list="unitOptions" class="item-unit" data-idx="${idx}" value="${escapeHtml(row.unit || "")}" placeholder="e.g. Each" autocomplete="off" />
+          ${row.inventory_item_id ? `
+            <select class="item-unit" data-idx="${idx}">
+              ${unitChoiceOptions(row).map(o => `<option value="${escapeHtml(o.value)}" ${o.value===row.unit?"selected":""}>${escapeHtml(o.label)}</option>`).join("")}
+            </select>
+          ` : `
+            <input type="text" class="item-unit-placeholder" value="" placeholder="Pick an item first" disabled />
+          `}
         </div>
       </div>
-      ${row.purchaseUnit && row.purchaseUnit !== row.unit ? `<div class="req-qty" style="margin-top:4px;">Purchased as: ${escapeHtml(row.purchaseUnit)}</div>` : ""}
     </div>
   `).join("");
 
@@ -596,8 +617,8 @@ function renderItemRows(){
       newTransferRows[Number(e.target.dataset.idx)].quantity = e.target.value;
     });
   });
-  wrap.querySelectorAll(".item-unit").forEach(inp => {
-    inp.addEventListener("input", (e) => {
+  wrap.querySelectorAll("select.item-unit").forEach(sel => {
+    sel.addEventListener("change", (e) => {
       newTransferRows[Number(e.target.dataset.idx)].unit = e.target.value;
     });
   });
